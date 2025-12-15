@@ -1,4 +1,4 @@
-using CharonGateway.Models;
+using CharonDbContext.Models;
 using HotChocolate.Types;
 using System.Text.Json;
 

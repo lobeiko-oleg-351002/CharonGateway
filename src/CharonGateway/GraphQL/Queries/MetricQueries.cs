@@ -1,5 +1,5 @@
-using CharonGateway.Data;
-using CharonGateway.Models;
+using CharonDbContext.Data;
+using CharonDbContext.Models;
 using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Types;
