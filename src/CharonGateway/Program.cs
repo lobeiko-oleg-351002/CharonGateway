@@ -1,7 +1,7 @@
 using CharonGateway.Configuration;
-using CharonGateway.Data;
 using CharonGateway.GraphQL.Queries;
 using CharonGateway.GraphQL.Types;
+using CharonDbContext.Data;
 using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
