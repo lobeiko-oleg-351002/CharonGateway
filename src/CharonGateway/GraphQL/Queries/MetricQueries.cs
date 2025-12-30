@@ -4,26 +4,51 @@ using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Types;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace CharonGateway.GraphQL.Queries;
 
 [ExtendObjectType(OperationTypeNames.Query)]
 public class MetricQueries
 {
+    private readonly ILogger<MetricQueries> _logger;
+
+    public MetricQueries(ILogger<MetricQueries> logger)
+    {
+        _logger = logger;
+    }
+
     [UsePaging]
-    [UseProjection]
     [UseFiltering]
     [UseSorting]
     public IQueryable<Metric> GetMetrics(
-        [Service] ApplicationDbContext context)
+        [Service] ApplicationDbContext? context)
     {
-        return context.Metrics;
+        try
+        {
+            if (context == null)
+            {
+                _logger?.LogWarning("ApplicationDbContext is null in GetMetrics");
+                return Array.Empty<Metric>().AsQueryable();
+            }
+            return context.Metrics;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Error accessing Metrics in GetMetrics");
+            return Array.Empty<Metric>().AsQueryable();
+        }
     }
 
     public async Task<Metric?> GetMetricById(
         int id,
         [Service] ApplicationDbContext context)
     {
+        if (context == null)
+        {
+            _logger?.LogWarning("ApplicationDbContext is null in GetMetricById");
+            return null;
+        }
         return await context.Metrics.FirstOrDefaultAsync(m => m.Id == id);
     }
 
@@ -33,47 +58,74 @@ public class MetricQueries
         string type,
         [Service] ApplicationDbContext context)
     {
+        if (context == null)
+        {
+            _logger?.LogWarning("ApplicationDbContext is null in GetMetricsByType");
+            return Array.Empty<Metric>().AsQueryable();
+        }
         return context.Metrics.Where(m => m.Type == type);
     }
 
     public async Task<MetricsAggregation> GetMetricsAggregation(
+        [Service] ApplicationDbContext context,
         DateTime? fromDate = null,
         DateTime? toDate = null,
-        string? type = null,
-        [Service] ApplicationDbContext context = null!)
+        string? type = null)
     {
-        var query = context.Metrics.AsQueryable();
-
-        if (fromDate.HasValue)
+        if (context == null)
         {
-            query = query.Where(m => m.CreatedAt >= fromDate.Value);
-        }
-
-        if (toDate.HasValue)
-        {
-            query = query.Where(m => m.CreatedAt <= toDate.Value);
-        }
-
-        if (!string.IsNullOrEmpty(type))
-        {
-            query = query.Where(m => m.Type == type);
-        }
-
-        var totalCount = await query.CountAsync();
-        var typeGroups = await query
-            .GroupBy(m => m.Type)
-            .Select(g => new TypeAggregation
+            _logger.LogWarning("ApplicationDbContext is null in GetMetricsAggregation");
+            return new MetricsAggregation
             {
-                Type = g.Key,
-                Count = g.Count()
-            })
-            .ToListAsync();
+                TotalCount = 0,
+                TypeAggregations = new List<TypeAggregation>()
+            };
+        }
 
-        return new MetricsAggregation
+        try
         {
-            TotalCount = totalCount,
-            TypeAggregations = typeGroups
-        };
+            var query = context.Metrics.AsQueryable();
+
+            if (fromDate.HasValue)
+            {
+                query = query.Where(m => m.CreatedAt >= fromDate.Value);
+            }
+
+            if (toDate.HasValue)
+            {
+                query = query.Where(m => m.CreatedAt <= toDate.Value);
+            }
+
+            if (!string.IsNullOrEmpty(type))
+            {
+                query = query.Where(m => m.Type == type);
+            }
+
+            var totalCount = await query.CountAsync();
+            var typeGroups = await query
+                .GroupBy(m => m.Type)
+                .Select(g => new TypeAggregation
+                {
+                    Type = g.Key ?? string.Empty,
+                    Count = g.Count()
+                })
+                .ToListAsync();
+
+            return new MetricsAggregation
+            {
+                TotalCount = totalCount,
+                TypeAggregations = typeGroups
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetMetricsAggregation");
+            return new MetricsAggregation
+            {
+                TotalCount = 0,
+                TypeAggregations = new List<TypeAggregation>()
+            };
+        }
     }
 }
 

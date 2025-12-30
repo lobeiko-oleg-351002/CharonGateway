@@ -1,6 +1,7 @@
 using CharonGateway.Configuration;
 using CharonGateway.GraphQL.Queries;
 using CharonGateway.GraphQL.Types;
+using CharonGateway.Hubs;
 using CharonDbContext.Data;
 using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
@@ -52,9 +53,32 @@ try
         .AddSorting()
         .AddProjections()
         .AddType<MetricsAggregation>()
-        .AddType<TypeAggregation>();
+        .AddType<TypeAggregation>()
+        .ModifyPagingOptions(options =>
+        {
+            options.IncludeTotalCount = true;
+        })
+        .ModifyRequestOptions(options =>
+        {
+            options.ExecutionTimeout = TimeSpan.FromSeconds(30);
+        });
+
+    builder.Services.AddSignalR();
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("AllowFrontend", policy =>
+        {
+            policy.WithOrigins("http://localhost:4200", "http://localhost:5005")
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        });
+    });
 
     var app = builder.Build();
+    
+    // CORS must be before other middleware
+    app.UseCors("AllowFrontend");
     
     if (app.Environment.IsDevelopment())
     {
@@ -71,6 +95,7 @@ try
     app.UseHttpsRedirection();
     app.UseAuthorization();
     app.MapControllers();
+    app.MapHub<MetricsHub>("/metricsHub");
     
     Log.Information("Charon GraphQL Gateway started successfully");
     
