@@ -33,9 +33,14 @@ public class MetricQueries
             }
             return context.Metrics;
         }
+        catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 208) // Invalid object name
+        {
+            _logger?.LogWarning("Metrics table does not exist yet. Database may not be initialized.");
+            return Array.Empty<Metric>().AsQueryable();
+        }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Error accessing Metrics in GetMetrics");
+            _logger?.LogError(ex, "Error accessing Metrics in GetMetrics: {Error}", ex.Message);
             return Array.Empty<Metric>().AsQueryable();
         }
     }
