@@ -1,0 +1,120 @@
+using CharonGateway.Middleware.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+
+namespace CharonGateway.Middleware;
+
+public class ExceptionHandlingService : IExceptionHandlingService
+{
+    private readonly ILogger<ExceptionHandlingService> _logger;
+    private readonly ILoggingService _loggingService;
+
+    public ExceptionHandlingService(
+        ILogger<ExceptionHandlingService> logger,
+        ILoggingService loggingService)
+    {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _loggingService = loggingService ?? throw new ArgumentNullException(nameof(loggingService));
+    }
+
+    public async Task<T> ExecuteAsync<T>(Func<Task<T>> action, string operationName, CancellationToken cancellationToken = default)
+    {
+        var startTime = DateTime.UtcNow;
+        _loggingService.LogMethodStart(operationName);
+
+        try
+        {
+            var result = await action();
+            var duration = DateTime.UtcNow - startTime;
+            _loggingService.LogMethodSuccess(operationName, result, duration);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            var duration = DateTime.UtcNow - startTime;
+            _loggingService.LogMethodFailure(operationName, ex, duration);
+            
+            if (ShouldRethrow(ex))
+            {
+                throw;
+            }
+            
+            if (typeof(T).IsValueType && Nullable.GetUnderlyingType(typeof(T)) == null)
+            {
+                throw;
+            }
+            
+            return HandleException(ex, operationName, default(T)!);
+        }
+    }
+
+    public async Task ExecuteAsync(Func<Task> action, string operationName, CancellationToken cancellationToken = default)
+    {
+        var startTime = DateTime.UtcNow;
+        _loggingService.LogMethodStart(operationName);
+
+        try
+        {
+            await action();
+            var duration = DateTime.UtcNow - startTime;
+            _loggingService.LogMethodSuccess(operationName, duration: duration);
+        }
+        catch (Exception ex)
+        {
+            var duration = DateTime.UtcNow - startTime;
+            _loggingService.LogMethodFailure(operationName, ex, duration);
+            
+            if (ShouldRethrow(ex))
+            {
+                throw;
+            }
+        }
+    }
+
+    public T HandleException<T>(Exception exception, string operationName, T defaultValue = default!)
+    {
+        switch (exception)
+        {
+            case DbUpdateException dbEx:
+                _logger.LogWarning(dbEx, 
+                    "Database error in {OperationName}. Returning default value.", operationName);
+                return defaultValue;
+
+            case TaskCanceledException timeoutEx:
+                _logger.LogWarning(timeoutEx, 
+                    "Timeout in {OperationName}. Returning default value.", operationName);
+                return defaultValue;
+
+            case ArgumentException argEx:
+                _logger.LogError(argEx, 
+                    "Invalid argument in {OperationName}. Returning default value.", operationName);
+                return defaultValue;
+
+            default:
+                if (ShouldRethrow(exception))
+                {
+                    _logger.LogError(exception, 
+                        "Unhandled exception in {OperationName}. Rethrowing.", operationName);
+                    throw exception;
+                }
+                
+                _logger.LogError(exception, 
+                    "Exception in {OperationName}. Returning default value.", operationName);
+                return defaultValue;
+        }
+    }
+
+    public bool ShouldRethrow(Exception exception)
+    {
+        if (exception is DbUpdateException || exception is TaskCanceledException)
+        {
+            return false;
+        }
+
+        return exception is OutOfMemoryException 
+            || exception is StackOverflowException
+            || exception is ArgumentNullException;
+    }
+}
+
+
