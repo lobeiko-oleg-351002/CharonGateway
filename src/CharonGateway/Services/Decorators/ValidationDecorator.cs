@@ -55,6 +55,21 @@ public class ValidationDecorator : IMetricService
         return await _inner.GetMetricTypesAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<DailyAverageMetricDto>> GetDailyAveragesAsync(
+        DateTime fromDate,
+        DateTime toDate,
+        string? type = null,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (fromDate > toDate)
+        {
+            throw new ArgumentException("FromDate cannot be greater than ToDate", nameof(fromDate));
+        }
+
+        return await _inner.GetDailyAveragesAsync(fromDate, toDate, type, name, cancellationToken);
+    }
+
     private static void ValidateId(int id)
     {
         if (id <= 0)

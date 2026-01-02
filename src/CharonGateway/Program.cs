@@ -2,7 +2,6 @@ using CharonGateway.Configuration;
 using CharonGateway.GraphQL.Queries;
 using CharonGateway.GraphQL.Types;
 using CharonGateway.Middleware;
-using CharonGateway.Middleware.Interfaces;
 using CharonGateway.Repositories;
 using CharonGateway.Repositories.Interfaces;
 using CharonGateway.Services;
@@ -14,6 +13,7 @@ using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
+using CharonGateway.Repositories.Decorators;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -38,7 +38,12 @@ try
     
     builder.Host.UseSerilog();
     
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            // Ensure camelCase JSON serialization (Items -> items)
+            options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        });
     builder.Services.AddEndpointsApiExplorer();
 
     builder.Services.Configure<DatabaseOptions>(
@@ -56,30 +61,33 @@ try
     // Register FluentValidation
     builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-    // Register middleware services
-    builder.Services.AddScoped<ILoggingService, LoggingService>();
-    builder.Services.AddScoped<IExceptionHandlingService, ExceptionHandlingService>();
+    // Register repositories with logging decorator
+    builder.Services.AddScoped<MetricRepository>();
+    builder.Services.AddScoped<IMetricRepository>(serviceProvider =>
+    {
+        var inner = serviceProvider.GetRequiredService<MetricRepository>();
+        var logger = serviceProvider.GetRequiredService<ILogger<LoggingMetricRepositoryDecorator>>();
+        return new LoggingMetricRepositoryDecorator(inner, logger);
+    });
 
-    // Register repositories
-    builder.Services.AddScoped<IMetricRepository, MetricRepository>();
-
-    // Register services with decorators (order matters: validation -> exception handling)
+    // Register services with decorators (validation only)
+    // Exception handling is done by GlobalExceptionHandlerMiddleware at the HTTP level
     builder.Services.AddScoped<MetricService>();
     builder.Services.AddScoped<IMetricService>(serviceProvider =>
     {
         var inner = serviceProvider.GetRequiredService<MetricService>();
-        var exceptionHandling = serviceProvider.GetRequiredService<IExceptionHandlingService>();
-        
-        // Apply decorators in order: Validation -> Exception Handling
-        var withValidation = new ValidationDecorator(inner);
-        return new MetricServiceDecorator(withValidation, exceptionHandling);
+        // Apply validation decorator only
+        return new ValidationDecorator(inner);
     });
 
+    // Configure GraphQL server
+    // Note: Date-filtered queries should use REST API (/api/metrics) to avoid complexity limits
     builder.Services
         .AddGraphQLServer()
         .AddQueryType()
         .AddTypeExtension<MetricQueries>()
         .AddType<MetricType>()
+        .AddType<DailyAverageMetricType>()
         .AddFiltering()
         .AddSorting()
         .AddProjections()
@@ -115,6 +123,20 @@ try
         }
     }
     
+    // Configure middleware in correct order
+    // Add global exception handler middleware first (catches all exceptions)
+    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+    
+    // HTTPS redirection (may redirect HTTP to HTTPS, but should not affect API calls)
+    app.UseHttpsRedirection();
+    
+    // Authorization
+    app.UseAuthorization();
+    
+    // Map API controllers
+    app.MapControllers();
+    
+    // Map GraphQL endpoint (after controllers to avoid conflicts)
     if (app.Environment.IsDevelopment())
     {
         app.MapGraphQL().WithOptions(new GraphQLServerOptions
@@ -126,14 +148,6 @@ try
     {
         app.MapGraphQL();
     }
-
-    app.UseHttpsRedirection();
-    app.UseAuthorization();
-    
-    // Add global exception handler middleware (must be before MapControllers)
-    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
-    
-    app.MapControllers();
     
     Log.Information("Charon GraphQL Gateway started successfully");
     
