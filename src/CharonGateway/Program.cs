@@ -38,7 +38,12 @@ try
     
     builder.Host.UseSerilog();
     
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            // Ensure camelCase JSON serialization (Items -> items)
+            options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        });
     builder.Services.AddEndpointsApiExplorer();
 
     builder.Services.Configure<DatabaseOptions>(
@@ -80,6 +85,7 @@ try
         .AddQueryType()
         .AddTypeExtension<MetricQueries>()
         .AddType<MetricType>()
+        .AddType<DailyAverageMetricType>()
         .AddFiltering()
         .AddSorting()
         .AddProjections()
@@ -92,6 +98,27 @@ try
         .ModifyRequestOptions(options =>
         {
             options.ExecutionTimeout = TimeSpan.FromSeconds(30);
+            // Increase complexity limit to handle date-filtered queries with payload
+            // Default is 1000, but queries with payload field can reach ~2652
+            // Use reflection to find and set the complexity limit
+            var optionsType = options.GetType();
+            var complexityProperty = optionsType.GetProperty("Complexity");
+            if (complexityProperty != null)
+            {
+                var complexityObj = complexityProperty.GetValue(options);
+                if (complexityObj != null)
+                {
+                    var complexityType = complexityObj.GetType();
+                    var maxAllowedProperty = complexityType.GetProperty("MaxAllowedComplexity") 
+                        ?? complexityType.GetProperty("MaximumAllowed")
+                        ?? complexityType.GetProperty("MaximumComplexity");
+                    if (maxAllowedProperty != null && maxAllowedProperty.CanWrite)
+                    {
+                        maxAllowedProperty.SetValue(complexityObj, 3000);
+                        Log.Information($"Set complexity limit to 3000 via reflection");
+                    }
+                }
+            }
         });
 
     var app = builder.Build();
@@ -115,6 +142,20 @@ try
         }
     }
     
+    // Configure middleware in correct order
+    // Add global exception handler middleware first (catches all exceptions)
+    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
+    
+    // HTTPS redirection (may redirect HTTP to HTTPS, but should not affect API calls)
+    app.UseHttpsRedirection();
+    
+    // Authorization
+    app.UseAuthorization();
+    
+    // Map API controllers
+    app.MapControllers();
+    
+    // Map GraphQL endpoint (after controllers to avoid conflicts)
     if (app.Environment.IsDevelopment())
     {
         app.MapGraphQL().WithOptions(new GraphQLServerOptions
@@ -126,14 +167,6 @@ try
     {
         app.MapGraphQL();
     }
-
-    app.UseHttpsRedirection();
-    app.UseAuthorization();
-    
-    // Add global exception handler middleware (must be before MapControllers)
-    app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
-    
-    app.MapControllers();
     
     Log.Information("Charon GraphQL Gateway started successfully");
     

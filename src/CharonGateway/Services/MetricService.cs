@@ -110,6 +110,132 @@ public class MetricService : IMetricService
         return await _repository.GetDistinctTypesAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<DailyAverageMetricDto>> GetDailyAveragesAsync(
+        DateTime fromDate,
+        DateTime toDate,
+        string? type = null,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        // Limit date range to maximum 20 days to avoid complexity issues
+        var maxDays = 20;
+        var actualToDate = toDate;
+        if ((toDate - fromDate).TotalDays > maxDays)
+        {
+            actualToDate = fromDate.AddDays(maxDays);
+        }
+
+        var query = _repository.GetQueryable()
+            .Where(m => m.CreatedAt >= fromDate && m.CreatedAt <= actualToDate);
+
+        if (!string.IsNullOrWhiteSpace(type))
+        {
+            query = query.Where(m => m.Type == type);
+        }
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            query = query.Where(m => m.Name.Contains(name));
+        }
+
+        // Group by date (without time), type, and name
+        var groupedMetrics = await query
+            .ToListAsync(cancellationToken);
+
+        var dailyGroups = groupedMetrics
+            .GroupBy(m => new
+            {
+                Date = m.CreatedAt.Date,
+                Type = m.Type,
+                Name = m.Name
+            })
+            .Select(g => new DailyAverageMetricDto
+            {
+                Date = g.Key.Date,
+                Type = g.Key.Type,
+                Name = g.Key.Name,
+                Count = g.Count(),
+                AverageValues = CalculateAverageValues(g.Select(m => m.PayloadJson).ToList())
+            })
+            .OrderBy(d => d.Date)
+            .ThenBy(d => d.Type)
+            .ThenBy(d => d.Name)
+            .Take(20) // Limit to 20 daily aggregates to avoid complexity
+            .ToList();
+
+        return dailyGroups;
+    }
+
+    private Dictionary<string, double> CalculateAverageValues(List<string> payloadJsonList)
+    {
+        var result = new Dictionary<string, double>();
+        var numericValues = new Dictionary<string, List<double>>();
+
+        foreach (var payloadJson in payloadJsonList)
+        {
+            if (string.IsNullOrEmpty(payloadJson))
+                continue;
+
+            try
+            {
+                var payload = JsonSerializer.Deserialize<Dictionary<string, object>>(payloadJson);
+                if (payload == null)
+                    continue;
+
+                foreach (var kvp in payload)
+                {
+                    var value = ConvertToDouble(kvp.Value);
+                    if (value.HasValue)
+                    {
+                        if (!numericValues.ContainsKey(kvp.Key))
+                        {
+                            numericValues[kvp.Key] = new List<double>();
+                        }
+                        numericValues[kvp.Key].Add(value.Value);
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Skip invalid JSON
+                continue;
+            }
+        }
+
+        // Calculate averages and limit to top 5 most common keys to reduce complexity
+        var sortedKeys = numericValues
+            .OrderByDescending(kvp => kvp.Value.Count)
+            .Take(5)
+            .ToList();
+
+        foreach (var kvp in sortedKeys)
+        {
+            if (kvp.Value.Count > 0)
+            {
+                result[kvp.Key] = kvp.Value.Average();
+            }
+        }
+
+        return result;
+    }
+
+    private double? ConvertToDouble(object? value)
+    {
+        if (value == null)
+            return null;
+
+        return value switch
+        {
+            double d => d,
+            float f => f,
+            int i => i,
+            long l => l,
+            decimal dec => (double)dec,
+            string str => double.TryParse(str, out var parsed) ? parsed : null,
+            _ => null
+        };
+    }
+
     private IQueryable<CharonDbContext.Models.Metric> ApplyFilters(
         IQueryable<CharonDbContext.Models.Metric> query,
         MetricQueryRequest request)

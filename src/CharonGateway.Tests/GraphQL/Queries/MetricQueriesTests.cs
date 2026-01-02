@@ -1,4 +1,5 @@
 using CharonGateway.GraphQL.Queries;
+using CharonGateway.Services.Interfaces;
 using CharonDbContext.Data;
 using CharonDbContext.Models;
 using FluentAssertions;
@@ -13,6 +14,7 @@ public class MetricQueriesTests
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly Mock<ILogger<MetricQueries>> _loggerMock;
+    private readonly Mock<IMetricService> _metricServiceMock;
     private readonly MetricQueries _queries;
 
     public MetricQueriesTests()
@@ -23,7 +25,8 @@ public class MetricQueriesTests
 
         _dbContext = new ApplicationDbContext(options);
         _loggerMock = new Mock<ILogger<MetricQueries>>();
-        _queries = new MetricQueries(_loggerMock.Object);
+        _metricServiceMock = new Mock<IMetricService>();
+        _queries = new MetricQueries(_loggerMock.Object, _metricServiceMock.Object);
     }
 
     [Fact]
@@ -302,5 +305,6 @@ public class MetricQueriesTests
         result.Should().NotBeNull();
     }
 }
+
 
 

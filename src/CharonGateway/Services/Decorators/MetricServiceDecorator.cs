@@ -57,6 +57,19 @@ public class MetricServiceDecorator : IMetricService
             nameof(GetMetricTypesAsync),
             cancellationToken);
     }
+
+    public async Task<IEnumerable<DailyAverageMetricDto>> GetDailyAveragesAsync(
+        DateTime fromDate,
+        DateTime toDate,
+        string? type = null,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        return await _exceptionHandling.ExecuteAsync(
+            async () => await _inner.GetDailyAveragesAsync(fromDate, toDate, type, name, cancellationToken),
+            $"{nameof(GetDailyAveragesAsync)} (FromDate: {fromDate}, ToDate: {toDate})",
+            cancellationToken);
+    }
 }
 
 

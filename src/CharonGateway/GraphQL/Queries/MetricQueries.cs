@@ -1,5 +1,7 @@
 using CharonDbContext.Data;
 using CharonDbContext.Models;
+using CharonGateway.Models.DTOs;
+using CharonGateway.Services.Interfaces;
 using HotChocolate;
 using HotChocolate.Data;
 using HotChocolate.Types;
@@ -12,10 +14,12 @@ namespace CharonGateway.GraphQL.Queries;
 public class MetricQueries
 {
     private readonly ILogger<MetricQueries> _logger;
+    private readonly IMetricService _metricService;
 
-    public MetricQueries(ILogger<MetricQueries> logger)
+    public MetricQueries(ILogger<MetricQueries> logger, IMetricService metricService)
     {
         _logger = logger;
+        _metricService = metricService ?? throw new ArgumentNullException(nameof(metricService));
     }
 
     [UsePaging]
@@ -75,7 +79,8 @@ public class MetricQueries
         [Service] ApplicationDbContext context,
         DateTime? fromDate = null,
         DateTime? toDate = null,
-        string? type = null)
+        string? type = null,
+        string? name = null)
     {
         if (context == null)
         {
@@ -106,6 +111,11 @@ public class MetricQueries
                 query = query.Where(m => m.Type == type);
             }
 
+            if (!string.IsNullOrEmpty(name))
+            {
+                query = query.Where(m => m.Name.Contains(name));
+            }
+
             var totalCount = await query.CountAsync();
             var typeGroups = await query
                 .GroupBy(m => m.Type)
@@ -130,6 +140,23 @@ public class MetricQueries
                 TotalCount = 0,
                 TypeAggregations = new List<TypeAggregation>()
             };
+        }
+    }
+
+    public async Task<IEnumerable<DailyAverageMetricDto>> GetDailyAverageMetrics(
+        DateTime fromDate,
+        DateTime toDate,
+        string? type = null,
+        string? name = null)
+    {
+        try
+        {
+            return await _metricService.GetDailyAveragesAsync(fromDate, toDate, type, name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in GetDailyAverageMetrics");
+            return Array.Empty<DailyAverageMetricDto>();
         }
     }
 }
