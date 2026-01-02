@@ -124,6 +124,35 @@ public class MetricsController : ControllerBase
     }
 
     /// <summary>
+    /// Get daily average metrics for a date range
+    /// </summary>
+    /// <param name="fromDate">Start date (ISO 8601 format)</param>
+    /// <param name="toDate">End date (ISO 8601 format)</param>
+    /// <param name="type">Optional metric type filter</param>
+    /// <param name="name">Optional metric name/location filter</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>List of daily average metrics</returns>
+    [HttpGet("daily-averages")]
+    [ProducesResponseType(typeof(IEnumerable<DailyAverageMetricDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<IEnumerable<DailyAverageMetricDto>>> GetDailyAverages(
+        [FromQuery] DateTime fromDate,
+        [FromQuery] DateTime toDate,
+        [FromQuery] string? type = null,
+        [FromQuery] string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (fromDate >= toDate)
+        {
+            return BadRequest(new { error = "fromDate must be before toDate" });
+        }
+
+        var result = await _metricService.GetDailyAveragesAsync(fromDate, toDate, type, name, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Get available metric types
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>

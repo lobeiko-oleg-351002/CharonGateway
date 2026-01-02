@@ -117,16 +117,20 @@ public class MetricService : IMetricService
         string? name = null,
         CancellationToken cancellationToken = default)
     {
-        // Limit date range to maximum 20 days to avoid complexity issues
-        var maxDays = 20;
-        var actualToDate = toDate;
-        if ((toDate - fromDate).TotalDays > maxDays)
+        // Normalize dates to ensure proper filtering (start of fromDate, end of toDate)
+        // Use Date property to compare dates without time component
+        var normalizedFromDate = fromDate.Date;
+        var normalizedToDate = toDate.Date;
+        
+        // Limit date range to maximum 30 days to avoid complexity issues
+        var maxDays = 30;
+        if ((normalizedToDate - normalizedFromDate).TotalDays > maxDays)
         {
-            actualToDate = fromDate.AddDays(maxDays);
+            normalizedToDate = normalizedFromDate.AddDays(maxDays);
         }
-
+        
         var query = _repository.GetQueryable()
-            .Where(m => m.CreatedAt >= fromDate && m.CreatedAt <= actualToDate);
+            .Where(m => m.CreatedAt.Date >= normalizedFromDate && m.CreatedAt.Date <= normalizedToDate);
 
         if (!string.IsNullOrWhiteSpace(type))
         {
@@ -160,7 +164,6 @@ public class MetricService : IMetricService
             .OrderBy(d => d.Date)
             .ThenBy(d => d.Type)
             .ThenBy(d => d.Name)
-            .Take(20) // Limit to 20 daily aggregates to avoid complexity
             .ToList();
 
         return dailyGroups;
@@ -171,33 +174,44 @@ public class MetricService : IMetricService
         var result = new Dictionary<string, double>();
         var numericValues = new Dictionary<string, List<double>>();
 
+        if (payloadJsonList == null || payloadJsonList.Count == 0)
+            return result;
+
         foreach (var payloadJson in payloadJsonList)
         {
-            if (string.IsNullOrEmpty(payloadJson))
+            if (string.IsNullOrWhiteSpace(payloadJson))
                 continue;
 
             try
             {
-                var payload = JsonSerializer.Deserialize<Dictionary<string, object>>(payloadJson);
-                if (payload == null)
+                // Use JsonDocument for more flexible parsing
+                using var doc = JsonDocument.Parse(payloadJson);
+                var root = doc.RootElement;
+
+                if (root.ValueKind != JsonValueKind.Object)
                     continue;
 
-                foreach (var kvp in payload)
+                foreach (var property in root.EnumerateObject())
                 {
-                    var value = ConvertToDouble(kvp.Value);
+                    var value = ConvertJsonElementToDouble(property.Value);
                     if (value.HasValue)
                     {
-                        if (!numericValues.ContainsKey(kvp.Key))
+                        if (!numericValues.ContainsKey(property.Name))
                         {
-                            numericValues[kvp.Key] = new List<double>();
+                            numericValues[property.Name] = new List<double>();
                         }
-                        numericValues[kvp.Key].Add(value.Value);
+                        numericValues[property.Name].Add(value.Value);
                     }
                 }
             }
             catch (JsonException)
             {
                 // Skip invalid JSON
+                continue;
+            }
+            catch
+            {
+                // Skip invalid payloads
                 continue;
             }
         }
@@ -217,6 +231,18 @@ public class MetricService : IMetricService
         }
 
         return result;
+    }
+
+    private double? ConvertJsonElementToDouble(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number => element.GetDouble(),
+            JsonValueKind.String => double.TryParse(element.GetString(), out var parsed) ? parsed : null,
+            JsonValueKind.True => 1.0,
+            JsonValueKind.False => 0.0,
+            _ => null
+        };
     }
 
     private double? ConvertToDouble(object? value)
