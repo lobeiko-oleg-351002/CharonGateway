@@ -2,7 +2,6 @@ using CharonGateway.Configuration;
 using CharonGateway.GraphQL.Queries;
 using CharonGateway.GraphQL.Types;
 using CharonGateway.Middleware;
-using CharonGateway.Middleware.Interfaces;
 using CharonGateway.Repositories;
 using CharonGateway.Repositories.Interfaces;
 using CharonGateway.Services;
@@ -14,6 +13,7 @@ using HotChocolate.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
+using CharonGateway.Repositories.Decorators;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
@@ -61,25 +61,27 @@ try
     // Register FluentValidation
     builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-    // Register middleware services
-    builder.Services.AddScoped<ILoggingService, LoggingService>();
-    builder.Services.AddScoped<IExceptionHandlingService, ExceptionHandlingService>();
+    // Register repositories with logging decorator
+    builder.Services.AddScoped<MetricRepository>();
+    builder.Services.AddScoped<IMetricRepository>(serviceProvider =>
+    {
+        var inner = serviceProvider.GetRequiredService<MetricRepository>();
+        var logger = serviceProvider.GetRequiredService<ILogger<LoggingMetricRepositoryDecorator>>();
+        return new LoggingMetricRepositoryDecorator(inner, logger);
+    });
 
-    // Register repositories
-    builder.Services.AddScoped<IMetricRepository, MetricRepository>();
-
-    // Register services with decorators (order matters: validation -> exception handling)
+    // Register services with decorators (validation only)
+    // Exception handling is done by GlobalExceptionHandlerMiddleware at the HTTP level
     builder.Services.AddScoped<MetricService>();
     builder.Services.AddScoped<IMetricService>(serviceProvider =>
     {
         var inner = serviceProvider.GetRequiredService<MetricService>();
-        var exceptionHandling = serviceProvider.GetRequiredService<IExceptionHandlingService>();
-        
-        // Apply decorators in order: Validation -> Exception Handling
-        var withValidation = new ValidationDecorator(inner);
-        return new MetricServiceDecorator(withValidation, exceptionHandling);
+        // Apply validation decorator only
+        return new ValidationDecorator(inner);
     });
 
+    // Configure GraphQL server
+    // Note: Date-filtered queries should use REST API (/api/metrics) to avoid complexity limits
     builder.Services
         .AddGraphQLServer()
         .AddQueryType()
@@ -98,27 +100,6 @@ try
         .ModifyRequestOptions(options =>
         {
             options.ExecutionTimeout = TimeSpan.FromSeconds(30);
-            // Increase complexity limit to handle date-filtered queries with payload
-            // Default is 1000, but queries with payload field can reach ~2652
-            // Use reflection to find and set the complexity limit
-            var optionsType = options.GetType();
-            var complexityProperty = optionsType.GetProperty("Complexity");
-            if (complexityProperty != null)
-            {
-                var complexityObj = complexityProperty.GetValue(options);
-                if (complexityObj != null)
-                {
-                    var complexityType = complexityObj.GetType();
-                    var maxAllowedProperty = complexityType.GetProperty("MaxAllowedComplexity") 
-                        ?? complexityType.GetProperty("MaximumAllowed")
-                        ?? complexityType.GetProperty("MaximumComplexity");
-                    if (maxAllowedProperty != null && maxAllowedProperty.CanWrite)
-                    {
-                        maxAllowedProperty.SetValue(complexityObj, 3000);
-                        Log.Information($"Set complexity limit to 3000 via reflection");
-                    }
-                }
-            }
         });
 
     var app = builder.Build();

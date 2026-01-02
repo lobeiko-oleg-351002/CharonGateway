@@ -3,8 +3,6 @@ using CharonDbContext.Data;
 using CharonDbContext.Models;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Moq;
 using System.Text.Json;
 
 namespace CharonGateway.Tests.Repositories;
@@ -12,7 +10,6 @@ namespace CharonGateway.Tests.Repositories;
 public class MetricRepositoryTests
 {
     private readonly ApplicationDbContext _dbContext;
-    private readonly Mock<ILogger<MetricRepository>> _loggerMock;
     private readonly MetricRepository _repository;
 
     public MetricRepositoryTests()
@@ -22,8 +19,7 @@ public class MetricRepositoryTests
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
-        _loggerMock = new Mock<ILogger<MetricRepository>>();
-        _repository = new MetricRepository(_dbContext, _loggerMock.Object);
+        _repository = new MetricRepository(_dbContext);
     }
 
     [Fact]

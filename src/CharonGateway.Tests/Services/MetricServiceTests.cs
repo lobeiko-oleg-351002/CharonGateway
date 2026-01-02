@@ -29,7 +29,7 @@ public class MetricServiceTests
             .Options;
 
         _dbContext = new ApplicationDbContext(options);
-        _repository = new MetricRepository(_dbContext, new Mock<ILogger<MetricRepository>>().Object);
+        _repository = new MetricRepository(_dbContext);
         _service = new MetricService(_repository);
         _serviceWithValidation = new ValidationDecorator(_service);
     }
