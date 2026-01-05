@@ -5,27 +5,26 @@ EXPOSE 8080
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
-COPY ["CharonGateway/src/CharonGateway/CharonGateway.csproj", "CharonGateway/src/CharonGateway/"]
+# Copy solution and project files
+COPY ["CharonGateway.sln", "."]
+COPY ["CharonGateway/CharonGateway.csproj", "CharonGateway/"]
 
-COPY ["nuget-packages/", "/nuget-packages/"]
+# Restore dependencies
+RUN dotnet restore "CharonGateway/CharonGateway.csproj"
 
-RUN if [ -d "/nuget-packages" ] && [ "$(ls -A /nuget-packages/*.nupkg 2>/dev/null)" ]; then \
-        dotnet nuget add source /nuget-packages --name local-packages; \
-    fi
-
-RUN dotnet restore "CharonGateway/src/CharonGateway/CharonGateway.csproj"
-
-COPY ["CharonGateway/src/CharonGateway/", "CharonGateway/src/CharonGateway/"]
-
-WORKDIR "/src/CharonGateway/src/CharonGateway"
+# Copy everything else and build
+COPY . .
+WORKDIR "/src/CharonGateway"
 RUN dotnet build "CharonGateway.csproj" -c Release -o /app/build
 
 FROM build AS publish
-WORKDIR "/src/CharonGateway/src/CharonGateway"
-RUN dotnet publish "CharonGateway.csproj" -c Release -o /app/publish
+RUN dotnet publish "CharonGateway.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+
+RUN mkdir -p /app/logs
+
 ENTRYPOINT ["dotnet", "CharonGateway.dll"]
 
